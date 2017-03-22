@@ -78,19 +78,18 @@ Invoke方法会在Invoke或Query chaincode时被调用。其中的代码可以�
 
 那么，先看ChaincodeStub提供了哪些API。我将这些API分成了五大类。
 
-第一大类与state操作相关。通过这些API可以根据key来查询/添加/更新相应的state，比如单key的读写操作、按照key的字典序读取一定范围内的key-value集合
+第一大类与state操作相关。通过这些API可以根据key来查询/添加/更新相应的state。这些API提供了单key的读写操作、key字典序范围读取操作、composite key读取操作、底层数据库语法的查询操作等。
 
-此外，fabric也允许按照key的字典序获取某一范围内的key-value集合。
-
-第二大类与表的操作相关，fabric支持整表操作，也支持单行、多行操作。这里要说一下，fabric使用key-value的rocksdb存储数据，而rocksdb并不支持表的操作，所以，这里的API实际上是fabric封装出来的，底层依然会转成key-value进行读写。所以，如果使用这类API时，可能需要考虑性能的问题。
-第三类是与chaincode间相互调用有关的两个API。Fabric允许在一个chaincode中根据chaincode name去Invoke和query另一个chaincode。可以看到并没有deploy的API，也就是说，fabric不允许在一个chaincode中去部署新的chaincode。
+第二大类与与参数相关。fabric1.0修改了chaincode接口的定义，需要开发者自己调用API获取传入的参数。注意，传入的参数第一个是函数名称，之后才是相应的函数输入参数。
 
 ### Page 9
 ![slide9](images/Slide9.JPG)
 
-第四大类与Transaction有关。这一大类全是读操作。前面提到Transaction实际上是一个结构体，里面存储了很多的信息，这一大类API就允许你读出其中的这些信息。
+第三大类与Transaction有关，并且这一类都是读操作，读取transaction中各种信息，比如transaction id、timestamp等。
 
-最后一大类只有一个API，SetEvent。Fabric允许开发者定义自己的event，然后这个event会在transaction写进block时触发，因此开发者就可以自己写相应的event handler程序做一些相关的工作。
+第四类是与chaincode间相互调用有关的一个API。Fabric允许在一个chaincode中根据chaincode name和channel name去调用另一个chaincode。可以看到并没有deploy的API，也就是说，fabric不允许在一个chaincode中去部署新的chaincode。
+
+最后一类也只有一个API，SetEvent。Fabric允许开发者定义自己的event，然后这个event会在transaction写进block时触发，因此开发者就可以自己写相应的event handler程序做一些相关的工作。
 
 ### Page 10
 ![slide10](images/Slide10.JPG)
@@ -99,7 +98,7 @@ Invoke方法会在Invoke或Query chaincode时被调用。其中的代码可以�
 
 比如刚才看到的Start函数，它向指定的peer结点注册chaincode。
 
-辅助类都是与前面的state或table操作相关的API有关。
+辅助类StateRangeQueryIterator与前面state范围查询的API有关。
 
 关于API的详细说明可以打开这个链接看到。但是上面基于的是最新的fabric实现，所以跟刚才讲的会有很多不同。具体以你使用fabric版本为准。
 
@@ -110,114 +109,51 @@ Invoke方法会在Invoke或Query chaincode时被调用。其中的代码可以�
 
 在介绍具体调试步骤之前，我想先介绍一下chaincode运行的基本原理，我觉得这有助于chaincode的开发。
 
-首先，fabric peer结点有两种运行模式。一种是一般模式，在这种模式下chaincode运行在Docker容器中。这也是fabric在production环境下的运行模式。这就相当于给chaincode的运行提供了一个相对隔离的环境，这样整个系统也就更加的健壮。但是在这种模式下，调试过程就变得非常复杂。因为一旦调试过程中发现bug，重新修改代码后就要重新build Docker image，然后重新部署。而Docker image的部署是比较耗时的。
+首先，fabric peer结点有两种运行模式。一种是一般模式，在这种模式下chaincode运行在Docker容器中。这也是fabric在production环境下的运行模式。这就相当于给chaincode的运行提供了一个相对隔离的环境，这样整个系统也就更加的健壮。但是在这种模式下，调试过程就变得非常复杂。因为一旦调试过程中发现bug，重新install，然后重新部署。而在这个过程中，install和Docker image的build过程都比较耗时。
 
 所以，针对这个问题，fabric又提供了开发模式。在这种模式下chaincode直接运行在本地，这样chaincode的调试过程就与普通程序的调试过程完全一样，因此开发调试过程就更加容易。
+
+要说明的是，我目前看的fabric1.0的代码对于开发模式的支持还不完备，部署的时候回失败。
 
 ### Page 12
 ![slide12](images/Slide12.JPG)
 
-这个图描述的是开发模式下chaincode注册时的执行过程。
+但是因为开发模式的原理比较容易理解，这里我还是以开发模式为例介绍一下chaincode的运行原理。一般模式下，只需将chaincode的运行放在Docker容器中进行理解。
 
-首先，chaincode会向指定的peer结点发送相关信息，比如chaincode name。然后，peer结点会做一些检查，主要是看该chaincode name是否已存在。如果不存在，则注册成功，返回相关信息。此后，chaincode就与peer结点建立起了联系，二者始终处于互相监听状态。
+首先，这个图描述的是开发模式下chaincode注册时的执行过程。
+
+首先，chaincode会向指定的peer结点发送相关信息，比如chaincode name。然后，peer结点会做一些检查，主要是看该chaincode name是否已存在。如果不存在，则注册成功，为其创建相应的handler，然后返回相关信息。此后，chaincode就与peer结点建立起了联系，并且二者始终处于互相监听状态。
 
 ### Page 13
 ![slide13](images/Slide13.JPG)
 
-这个图描述的是开发模式下chaincode deploy/invoke/query时的运行过程。
+这个图描述的是开发模式下chaincode Instantiate/invoke/query时的运行过程。
 
-首先，通过CLI或App向指定peer结点发送deploy/invoke/query请求。
-Peer接收到请求之后，如果相关chaincode存在，就会组装相应的transaction，并发送给相应的chaincode。
-Chaincode端接收到transaction之后，会首先对其解析，确定要执行的函数，然后开始执行该函数。由于执行过程中，可能涉及到多次的worldstate的读写，而每一次的读写都会有rocksdb的操作，所以这个过程会涉及到多次与peer结点的通信。
-最后，chaincode执行完毕之后，会发送消息给peer结点，如果执行成功，peer结点就会将transaction写进block，并发送消息给CLI/App端。
+首先，通过CLI或App向指定endorser结点发送Instantiate/invoke/query请求。
+endorser接收到请求之后，如果相关chaincode存在，就会将请求发送到chaincode端，并执行相应函数。由于执行过程中，可能涉及到多次的state的读写，而每一次的读写都会涉及到底层db的操作，所以这个过程会涉及到多次与endorser结点的通信。
+
+最后，chaincode执行完毕之后，会发送消息给endorser结点。如果执行成功，endorser结点就会封装执行结果并对其endorse，并把结果返回给CLI/APP端，然后进行ordering。这个图里没有给出ordering和committing的过程。
 
 ### Page 14
 ![slide14](images/Slide14.JPG)
 
-这是在开发模式下，未启用CA时chaincode调试的基本步骤。
-都比较直观，没有太多要注意的地方。
+这里给出一般模式下Chaincode的开发调试过程。以fabric chaincode_example02为例，完全本地，并且使用fabric默认配置。我的环境是使用vagrant方式搭建的。
+
+首先，启动orderer结点，运行在solo模式下。
+
+然后，本地启动一个peer结点，指定peer的名称。
+
+然后，install chaincode程序，指定chaincode的名称以及version，它们将用于命名build出来的docker image。默认配置下，需要你的chaincode程序位于GOPATH/src路径下，并且这个命令会将GOPATH/src下的几乎所有文件都打包发送到指定的peer结点。
 
 ### Page 15
 ![slide15](images/Slide15.JPG)
 
-然后就可以通过deploy、invoke、query命令来调试相关函数了。
+接下来，通过Instantiate命令部署刚刚install的chaincode，同样需要给出chaincode名称和version。channel的名称是可选的，如果省略将默认使用testchainid这个channel，peer启东时会默认加入这个channel。
 
+之后，就可以通过invoke和query命令来调试自己的chaincode程序了。这里同样使用默认的channel testchainid。
 
-
-
-
-### Page 17
-![slide17](images/Slide17.JPG)
-
-这是一个transaction执行过程的时序图。
-
-以chaincode invocation为例。首先，client端会收集相关信息，比如chaincodeID、签名等信息，构造出invoke proposal，并将其发送至约定的endorser结点。在这个图中有三个endorser结点。每个endorser结点单独运行相应的chaincode。并对结果进行签名。执行完成后，会把结果以response的形式返回给client端。然后，Client端在收到足够的endorser响应之后会向orderer结点发送ordering请求。Orderer结点会根据endorsement policy验证是否能够将transaction写进block。如果通过，它会向channel上所有的committer结点发送消息，告诉它们可以将transaction写进block，也同时会返回结果消息给client端。至此，整个过程执行完毕。
-
-由图可知，endorser可以作为committer，但不是所有committer都是endorser。
-
-### Page 18
-![slide18](images/Slide18.JPG)
-
-下面看一下1.0中chaincode编写的一些变化。
-
-首先是Chaincode接口的定义发生了变化。去掉了原来的Query方法，将它的功能整合进了Invoke方法。另外，剩下的两个方法的接口定义也有些变化，输入参数仅剩ChaincodeStub，所以在编写chaincode时就要通过stub提供的API来获取相应的输入参数。同样地，在1.0中query操作依然不会生成transaction。
-
-### Page 19
-![slide19](images/Slide19.JPG)
-
-然后看一下ChaincodeStub中API的变化。
-
-首先，有一个接口方法的定义发生了改变，即InvokeChaincode，它允许在一个chaincode中调用另一个chaincode。输入参数上增加了channel，用于指定要调用的chaincode位于哪个channel中；返回值也从原来的[]byte变成了一个特定的类型pb.Response。
-
-然后为了支持新的功能，fabric1.0新增了若干的API。
-
-比如fabric1.0支持新的composite key查询的操作，因此新增了相应的API；比如fabric1.0允许直接使用底层使用的db所支持的语法来进行查询，所以新增了GetQueryResult方法等。
-
-
-### Page 20
-![slide20](images/Slide20.JPG)
-
-还有一些原来0.6中有的API被删除了。
-比如所有与表操作相关的API、Attribute相关的API等。
-
-### Page 21
-![slide21](images/Slide21.JPG)
-
-下面是CLI模式下fabric1.0调试chaincode的基本步骤。
-
-这里使用的是通过Docker-compose搭建而成的fabric1.0运行环境。这个网页上有给出搭建步骤，过程非常简单。
-搭建完成之后环境有3个peer结点、1个orderer结点、1个CA结点、一个cli结点。其中CLI结点（容器）特别用于执行CLI命令。
-
-然后就可以通过以下步骤来运行调试chaincode代码。过程与fabric0.6基本类似，只有一点不同，就是需要先创建channel，然后将相关peer结点join进该channel，之后deploy和invoke时就需要指定该channel。
-
-当然也可以完全按照0.6中的步骤去做，这样chaincode的执行实际上是执行在一个叫做testchainID 的默认channel上，而所有peer结点都在该channel上。
-
-### Page 22
-![slide22](images/Slide22.JPG)
-
-这是后续步骤。过程都比较直观，没有太多需要注意的地方。
-
-### Page 23
-![slide23](images/Slide23.JPG)
+### Page 16
+![slide16](images/Slide16.JPG)
 
 我的share到此结束，谢谢大家观看。
-
-另外，我在后面有几页附录，主要是把上面Docker-compose文件中的内容拆分成单独的步骤。之所以这么做，主要是因为在docker-compose方式搭建的环境中，无法看到各个结点打印的log信息，对于调试过程很不方便。分解成单独的步骤之后，每一步就可以在单独的shell下运行，也就能够看到相应的log信息。仅供参考。
-
-再次对大家的观看表示感谢。
-
-
-### Page 24
-![slide24](images/Slide24.JPG)
-
-
-### Page 25
-![slide25](images/Slide25.JPG)
-
-### Page 26
-![slide26](images/Slide26.JPG)
-
-### Page 27
-![slide27](images/Slide27.JPG)
-
 
